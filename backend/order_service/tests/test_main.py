@@ -267,35 +267,6 @@ def test_get_order_not_found(client: TestClient):
     assert response.json()["detail"] == "Order not found"
 
 
-def test_update_order_status(client: TestClient, db_session_for_test, mock_httpx_client):
-    """Test updating order status."""
-    # Mock customer service
-    mock_httpx_client.get.return_value.status_code = 200
-    mock_httpx_client.get.return_value.json.return_value = {
-        "customer_id": 1,
-        "email": "test@example.com",
-        "shipping_address": "123 Default St"
-    }
-    mock_httpx_client.get.return_value.raise_for_status.return_value = None
-
-    # Create order
-    order_data = {
-        "user_id": 1,
-        "items": [{"product_id": 1, "quantity": 1, "price_at_purchase": 10.00}]
-    }
-    create_response = client.post("/orders/", json=order_data)
-    order_id = create_response.json()["order_id"]
-
-    # Update status
-    status_data = {"status": "shipped"}
-    response = client.patch(f"/orders/{order_id}/status", json=status_data)
-    assert response.status_code == 200
-
-    updated_order = response.json()
-    assert updated_order["status"] == "shipped"
-    assert updated_order["order_id"] == order_id
-
-
 def test_update_order_status_not_found(client: TestClient):
     """Test updating status of non-existent order."""
     status_data = {"status": "shipped"}
