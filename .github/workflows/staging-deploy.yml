@@ -83,6 +83,11 @@ jobs:
       - name: Get AKS credentials
         run: az aks get-credentials -g "$AKS_RG" -n "$AKS_NAME" --overwrite-existing
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.0"
+
       - name: Create / ensure staging namespace
         run: |
           NS="${{ steps.meta.outputs.NS }}"
