@@ -91,7 +91,7 @@ jobs:
 
       - name: Login to ACR
         run: |
-          ACR_NAME="$(echo "${{ secrets.AZURE_CONTAINER_REGISTRY }}" | cut -d'.' -f1)"
+          ACR_NAME="$(echo "$REGISTRY" | cut -d'.' -f1)"
           az acr login --name "$ACR_NAME"
 
       - name: Set image tag
@@ -150,7 +150,7 @@ jobs:
 
       - name: Verify image push
         run: |
-          ACR_NAME="$(echo "${{ secrets.AZURE_CONTAINER_REGISTRY }}" | cut -d'.' -f1)"
+          ACR_NAME="$(echo "$REGISTRY" | cut -d'.' -f1)"
           echo "product-service:"
           az acr repository show-tags --name "$ACR_NAME" --repository product-service --orderby time_desc --top 5 || true
           echo "order-service:"
