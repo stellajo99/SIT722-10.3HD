@@ -7,7 +7,7 @@ on:
   workflow_dispatch:      
 
 env:
-  REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY }} 
+  REGISTRY: deakinstellaregistry.azurecr.io 
 
 jobs:
 
