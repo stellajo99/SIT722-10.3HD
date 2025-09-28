@@ -1,5 +1,5 @@
 #!/bin/bash
-
+# small change for trigger
 # terraform/setup-remote-state.sh
 # Script to create Azure Storage for Terraform remote state
 
