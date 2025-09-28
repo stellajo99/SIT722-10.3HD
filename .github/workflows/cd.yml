@@ -1,0 +1,364 @@
+# .github/workflows/cd.yml
+name: CD - Deploy to AKS
+
+on:
+  # Auto-deploy when CI completes successfully on main branch
+  workflow_run:
+    workflows: ["CI (testing push → test → ACR push)"]
+    types: [completed]
+    branches: [main]
+
+  # Manual deploy from Actions UI with environment selection
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target Environment"
+        required: true
+        default: "production"
+        type: choice
+        options:
+        - production
+        - staging
+      aks_resource_group:
+        description: "AKS Resource Group"
+        required: true
+        default: "deakinuni"
+      aks_cluster_name:
+        description: "AKS Cluster Name"
+        required: true
+        default: "deakinstellak8s"
+      namespace:
+        description: "Kubernetes Namespace"
+        required: true
+        default: "default"
+      image_tag:
+        description: "Image Tag (leave empty to use latest from main)"
+        required: false
+
+# Prevent overlapping duplicate runs
+concurrency:
+  group: cd-${{ github.event.inputs.environment || 'production' }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: "${{ secrets.AZURE_CONTAINER_REGISTRY }}"
+
+jobs:
+  deploy:
+    name: Deploy to AKS
+    # Auto: run only if CI succeeded on main branch
+    # Manual: always allowed
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      # --- Deployment Context & Safety Checks ---
+      - name: Display deployment context
+        run: |
+          echo "🚀 Starting deployment..."
+          echo "Event: ${{ github.event_name }}"
+          echo "Environment: ${{ github.event.inputs.environment || 'production' }}"
+          echo "Target Namespace: ${{ github.event.inputs.namespace || 'default' }}"
+          echo "Registry: ${{ env.REGISTRY }}"
+
+      - name: Debug trigger context
+        if: ${{ github.event_name == 'workflow_run' }}
+        run: |
+          echo "🔍 Workflow Run Context:"
+          echo "  Triggering workflow: ${{ github.event.workflow_run.name }}"
+          echo "  Event type: ${{ github.event.workflow_run.event }}"
+          echo "  Head branch: ${{ github.event.workflow_run.head_branch }}"
+          echo "  Conclusion: ${{ github.event.workflow_run.conclusion }}"
+          echo "  Workflow run ID: ${{ github.event.workflow_run.id }}"
+
+      # --- Repository & Authentication Setup ---
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure Login (Service Principal)
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set AKS context
+        run: |
+          echo "🔐 Configuring AKS access..."
+          az aks get-credentials \
+            -g "${{ github.event.inputs.aks_resource_group || 'deakinuni' }}" \
+            -n "${{ github.event.inputs.aks_cluster_name   || 'deakinstellak8s' }}" \
+            --overwrite-existing
+          
+          echo "✅ AKS context configured"
+          kubectl cluster-info
+
+      - name: Ensure namespace exists
+        run: |
+          NS="${{ github.event.inputs.namespace || 'default' }}"
+          echo "📁 Ensuring namespace '$NS' exists..."
+          kubectl get ns "$NS" || kubectl create ns "$NS"
+          echo "✅ Namespace ready"
+
+      # --- Image Tag Resolution ---
+      # Auto mode: download the artifact from the triggering CI run
+      - name: Download deploy manifest from CI
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: deploy-manifest
+          path: .
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read deploy manifest (auto deployment)
+        id: manifest_auto
+        if: ${{ github.event_name == 'workflow_run' }}
+        run: |
+          echo "📄 Reading deploy manifest from CI..."
+          cat deploy-manifest.json
+          echo "TAG=$(jq -r .tag deploy-manifest.json)"           >> "$GITHUB_OUTPUT"
+          echo "REGISTRY=$(jq -r .registry deploy-manifest.json)" >> "$GITHUB_OUTPUT"
+          echo "COMMIT_SHA=$(jq -r .commit_sha deploy-manifest.json)" >> "$GITHUB_OUTPUT"
+
+      # Manual mode: use provided tag or current commit's short SHA
+      - name: Set manifest for manual deployment
+        id: manifest_manual
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            TAG="${{ github.event.inputs.image_tag }}"
+            echo "🏷️  Using provided image tag: $TAG"
+          else
+            TAG="sha-${GITHUB_SHA::7}"
+            echo "🏷️  Using current commit tag: $TAG"
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "REGISTRY=${REGISTRY}" >> "$GITHUB_OUTPUT"
+
+      # Normalize outputs for consistent access
+      - name: Set final deployment manifest
+        id: manifest
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "TAG=${{ steps.manifest_auto.outputs.TAG }}"             >> "$GITHUB_OUTPUT"
+            echo "REGISTRY=${{ steps.manifest_auto.outputs.REGISTRY }}"   >> "$GITHUB_OUTPUT"
+            echo "COMMIT_SHA=${{ steps.manifest_auto.outputs.COMMIT_SHA }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "TAG=${{ steps.manifest_manual.outputs.TAG }}"           >> "$GITHUB_OUTPUT"
+            echo "REGISTRY=${{ steps.manifest_manual.outputs.REGISTRY }}" >> "$GITHUB_OUTPUT"
+            echo "COMMIT_SHA=${{ github.sha }}"                           >> "$GITHUB_OUTPUT"
+          fi
+          
+          echo "🏷️  Final deployment configuration:"
+          echo "   Image tag: ${{ steps.manifest.outputs.TAG }}"
+          echo "   Registry: ${{ steps.manifest.outputs.REGISTRY }}"
+          echo "   Commit: ${{ steps.manifest.outputs.COMMIT_SHA }}"
+
+      # --- Pre-deployment Verification ---
+      - name: Verify images exist in registry
+        run: |
+          echo "🔍 Verifying images exist in ACR..."
+          ACR_NAME="$(echo "${{ steps.manifest.outputs.REGISTRY }}" | cut -d'.' -f1)"
+          TAG="${{ steps.manifest.outputs.TAG }}"
+          
+          # Check if all required images exist
+          for service in product-service order-service customer-service frontend; do
+            echo "Checking $service:$TAG..."
+            if az acr repository show-tags --name "$ACR_NAME" --repository "$service" | grep -q "\"$TAG\""; then
+              echo "✅ $service:$TAG exists"
+            else
+              echo "❌ $service:$TAG not found!"
+              echo "Available tags for $service:"
+              az acr repository show-tags --name "$ACR_NAME" --repository "$service" --top 5
+              exit 1
+            fi
+          done
+
+      # --- Database Deployment (if needed) ---
+      - name: Deploy databases (if not exists)
+        env:
+          NS: ${{ github.event.inputs.namespace || 'default' }}
+        run: |
+          echo "🗄️  Ensuring databases are deployed..."
+          
+          # Check if databases are already running
+          if ! kubectl get deployment product-db-deployment-w10e1 -n "$NS" > /dev/null 2>&1; then
+            echo "Deploying product database..."
+            kubectl apply -n "$NS" -f k8s/product-db.yaml
+          fi
+          
+          if ! kubectl get deployment order-db-deployment-w10e1 -n "$NS" > /dev/null 2>&1; then
+            echo "Deploying order database..."
+            kubectl apply -n "$NS" -f k8s/order-db.yaml
+          fi
+
+          if ! kubectl get deployment customer-db-deployment-w10e1 -n "$NS" > /dev/null 2>&1; then
+            echo "Deploying customer database..."
+            kubectl apply -n "$NS" -f k8s/customer-db.yaml
+          fi
+
+          echo "✅ Database deployments ensured"
+
+      # --- Application Deployment ---
+      - name: Apply Kubernetes manifests
+        env:
+          NS: ${{ github.event.inputs.namespace || 'default' }}
+        run: |
+          echo "📦 Applying Kubernetes manifests..."
+          
+          # Apply configuration first
+          kubectl apply -n "$NS" -f k8s/configmaps.yaml
+          kubectl apply -n "$NS" -f k8s/secrets.yaml
+          
+          # Apply application manifests
+          kubectl apply -n "$NS" -f k8s/product-service.yaml
+          kubectl apply -n "$NS" -f k8s/order-service.yaml
+          kubectl apply -n "$NS" -f k8s/customer-service.yaml
+          kubectl apply -n "$NS" -f k8s/frontend.yaml
+          
+          echo "✅ Manifests applied successfully"
+
+      # --- Create Default Frontend Config ---
+      - name: Create default frontend config
+        env:
+          NS: ${{ github.event.inputs.namespace || 'default' }}
+        run: |
+          echo "⚙️ Creating default frontend configuration..."
+          
+          # Create default config to allow frontend to start
+          cat > default-config.js << EOF
+          window.__CONFIG__ = {
+            PRODUCT_API_URL: 'http://loading:8000',
+            ORDER_API_URL: 'http://loading:8001',
+            CUSTOMER_API_URL: 'http://loading:8002',
+            STATUS: 'loading'
+          };
+          EOF
+          
+          # Create or update the ConfigMap
+          kubectl -n "$NS" create configmap frontend-config --from-file=config.js=default-config.js --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "✅ Default frontend config created"
+
+      # --- Image Updates ---
+      - name: Update deployment images
+        env:
+          NS:  ${{ github.event.inputs.namespace || 'default' }}
+          REG: ${{ steps.manifest.outputs.REGISTRY }}
+          TAG: ${{ steps.manifest.outputs.TAG }}
+        run: |
+          echo "🔄 Updating deployment images to $TAG..."
+          
+          # Update images with explicit container names (no auto-detection)
+          kubectl -n "$NS" set image deploy/product-service-w10e1 product-service-container="$REG/product-service:$TAG"
+          kubectl -n "$NS" set image deploy/order-service-w10e1 order-service-container="$REG/order-service:$TAG"
+          kubectl -n "$NS" set image deploy/customer-service-w10e1 customer-service-container="$REG/customer-service:$TAG"
+          kubectl -n "$NS" set image deploy/frontend frontend="$REG/frontend:$TAG"
+          
+          echo "✅ Image updates applied"
+
+      # --- Rollout Management ---
+      - name: Wait for deployments to complete
+        env:
+          NS: ${{ github.event.inputs.namespace || 'default' }}
+        run: |
+          echo "⏳ Waiting for rollouts to complete..."
+          
+          for DEP in product-service-w10e1 order-service-w10e1 customer-service-w10e1 frontend; do
+            echo "Waiting for $DEP rollout..."
+            if ! kubectl -n "$NS" rollout status "deploy/$DEP" --timeout=600s; then
+              echo "❌ Rollout failed for $DEP"
+              echo "Deployment description:"
+              kubectl -n "$NS" describe deploy "$DEP"
+              echo "Pod status:"
+              kubectl -n "$NS" get pods -l app=$(echo $DEP | sed 's/-w10e1$//') -o wide
+              echo "Recent events:"
+              kubectl -n "$NS" get events --sort-by=.metadata.creationTimestamp --field-selector involvedObject.name=$DEP
+              exit 1
+            else
+              echo "✅ $DEP rollout completed successfully"
+            fi
+          done
+
+      # --- Service Discovery & Configuration ---
+      - name: Wait for LoadBalancer IPs
+        id: services
+        env:
+          NS: ${{ github.event.inputs.namespace || 'default' }}
+        run: |
+          echo "🌐 Waiting for LoadBalancer external IPs..."
+          
+          # Wait for external IPs with better error handling
+          for service in "product-service-w10e1:PRODUCT_IP" "order-service-w10e1:ORDER_IP" "customer-service-w10e1:CUSTOMER_IP" "frontend-w10e1:FRONT_IP"; do
+            svc_name=$(echo $service | cut -d: -f1)
+            var_name=$(echo $service | cut -d: -f2)
+            
+            echo "Waiting for $svc_name external IP..."
+            for i in {1..60}; do
+              IP=$(kubectl get svc "$svc_name" -n "$NS" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+              if [ -n "$IP" ] && [ "$IP" != "null" ]; then
+                echo "$var_name=$IP" >> "$GITHUB_OUTPUT"
+                echo "✅ $svc_name: $IP"
+                break
+              fi
+              if [ $i -eq 60 ]; then
+                echo "❌ Timeout waiting for $svc_name external IP"
+                kubectl describe svc "$svc_name" -n "$NS"
+                exit 1
+              fi
+              sleep 10
+            done
+          done
+
+      - name: Update frontend runtime configuration
+        env:
+          NS: ${{ github.event.inputs.namespace || 'default' }}
+        run: |
+          echo "🔄 Updating frontend runtime configuration..."
+          
+          # Create final runtime configuration with actual IPs
+          cat > final-config.js << EOF
+          window.__CONFIG__ = {
+            PRODUCT_API_URL: 'http://${{ steps.services.outputs.PRODUCT_IP }}:8000',
+            ORDER_API_URL: 'http://${{ steps.services.outputs.ORDER_IP }}:8001',
+            CUSTOMER_API_URL: 'http://${{ steps.services.outputs.CUSTOMER_IP }}:8002',
+            VERSION: '${{ steps.manifest.outputs.TAG }}',
+            DEPLOYED_AT: '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+            STATUS: 'ready'
+          };
+          EOF
+          
+          # Update ConfigMap with final configuration
+          kubectl -n "$NS" create configmap frontend-config --from-file=config.js=final-config.js --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Restart frontend to pick up new config
+          kubectl -n "$NS" rollout restart deploy/frontend
+          kubectl -n "$NS" rollout status deploy/frontend --timeout=300s
+          
+          echo "✅ Frontend configuration updated with actual service IPs"
+
+      # --- Deployment Summary ---
+      - name: Deployment summary
+        run: |
+          echo "🎉 Deployment completed successfully!"
+          echo ""
+          echo "📋 Deployment Summary:"
+          echo "   Environment: ${{ github.event.inputs.environment || 'production' }}"
+          echo "   Namespace: ${{ github.event.inputs.namespace || 'default' }}"
+          echo "   Image Tag: ${{ steps.manifest.outputs.TAG }}"
+          echo "   Commit: ${{ steps.manifest.outputs.COMMIT_SHA }}"
+          echo ""
+          echo "🌐 Application Endpoints:"
+          echo "   Frontend:   http://${{ steps.services.outputs.FRONT_IP }}"
+          echo "   Products:   http://${{ steps.services.outputs.PRODUCT_IP }}:8000"
+          echo "   Orders:     http://${{ steps.services.outputs.ORDER_IP }}:8001"
+          echo "   Customers:  http://${{ steps.services.outputs.CUSTOMER_IP }}:8002"
+          echo ""
+          echo "✅ All services are ready!"

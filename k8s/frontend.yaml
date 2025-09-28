@@ -1,0 +1,43 @@
+# week10/k8s/frontend.yaml 
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels: { app: frontend }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: frontend }
+  template:
+    metadata:
+      labels: { app: frontend }
+    spec:
+      containers:
+        - name: frontend
+          image: deakinstellaregistry.azurecr.io/frontend:v1
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: frontend-config
+              mountPath: /usr/share/nginx/html/config.js
+              subPath: config.js
+      volumes:
+        - name: frontend-config
+          configMap:
+            name: frontend-config
+            items:
+              - key: config.js
+                path: config.js
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-w10e1
+  labels: { app: frontend }
+spec:
+  selector: { app: frontend }
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: LoadBalancer

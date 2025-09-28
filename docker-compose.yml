@@ -1,0 +1,162 @@
+# week10/docker-compose.yml
+
+version: "3.8"
+
+services:
+  # === PostgreSQL Databases ===
+  product_db:
+    image: postgres:15-alpine
+    container_name: product_db_container
+    restart: always
+    environment:
+      POSTGRES_DB: products
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - product_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d products"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  order_db:
+    image: postgres:15-alpine
+    container_name: order_db_container
+    restart: always
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - order_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d orders"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  customer_db:
+    image: postgres:15-alpine
+    container_name: customer_db_container
+    restart: always
+    environment:
+      POSTGRES_DB: customers
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    volumes:
+      - customer_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d customers"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # === FastAPI Microservices ===
+  product_service:
+    build:
+      context: ./backend/product_service
+      dockerfile: Dockerfile
+    image: week10_product_service:latest
+    container_name: product_api_container
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: product_db
+      POSTGRES_DB: products
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      AZURE_STORAGE_ACCOUNT_NAME: deakinstellastorage
+      AZURE_STORAGE_ACCOUNT_KEY: SqT2PrGXhmYWpE1pvpGMhF9PSx4wIaWe7v0Zgy3NwcJRjAPC82jaNRCvKjfXdu10nU85k25LqvF8+ASts0WYGA==
+      AZURE_STORAGE_CONTAINER_NAME: week10
+      AZURE_SAS_TOKEN_EXPIRY_HOURS: 24
+    depends_on:
+      product_db:
+        condition: service_healthy
+    volumes:
+      - ./backend/product_service/app:/code/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  order_service:
+    build:
+      context: ./backend/order_service
+      dockerfile: Dockerfile
+    image: week10_order_service:latest
+    container_name: order_api_container
+    restart: always
+    ports:
+      - "8001:8000"
+    environment:
+      POSTGRES_HOST: order_db
+      POSTGRES_DB: orders
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PRODUCT_SERVICE_URL: http://product_service:8000
+    depends_on:
+      order_db:
+        condition: service_healthy
+      product_service:
+        condition: service_started
+    volumes:
+      - ./backend/order_service/app:/code/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  customer_service:
+    build:
+      context: ./backend/customer_service
+      dockerfile: Dockerfile
+    image: week10_customer_service:latest
+    container_name: customer_api_container
+    restart: always
+    ports:
+      - "8002:8000"
+    environment:
+      POSTGRES_HOST: customer_db
+      POSTGRES_DB: customers
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PRODUCT_SERVICE_URL: http://product_service:8000
+      ORDER_SERVICE_URL: http://order_service:8000
+    depends_on:
+      customer_db:
+        condition: service_healthy
+      product_service:
+        condition: service_started
+      order_service:
+        condition: service_started
+    volumes:
+      - ./backend/customer_service/app:/code/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  # === Static Frontend via Nginx ===
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: week10_frontend:latest
+    container_name: product_order_frontend
+    restart: always
+    ports:
+      - "3000:80"
+    depends_on:
+      product_service:
+        condition: service_started
+      order_service:
+        condition: service_started
+      customer_service:
+        condition: service_started
+    volumes:
+      - ./frontend:/usr/share/nginx/html
+
+# === Named volumes ===
+volumes:
+  product_db_data:
+  order_db_data:
+  customer_db_data:

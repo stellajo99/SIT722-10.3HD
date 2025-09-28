@@ -1,0 +1,208 @@
+# .github/workflows/staging-deploy.yml
+name: CD - Staging (Create → Deploy → Test → Destroy)
+
+on:
+  workflow_run:
+    workflows: ["CI (testing push → test → ACR push)"]  
+    types: [completed]
+    branches: [testing]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "ACR image tag to deploy (e.g., testing-abcdef1). Empty = derive from run SHA."
+        required: false
+        type: string
+      namespace_suffix:
+        description: "Override namespace suffix (default: short SHA)"
+        required: false
+        type: string
+
+env:
+  REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
+  AKS_RG: deakinuni
+  AKS_NAME: deakinstellak8s
+
+concurrency:
+  group: staging-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  deploy-staging:
+
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'testing' && github.event.workflow_run.repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout @ CI head (workflow_run)
+        if: github.event_name == 'workflow_run'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Checkout (default)
+        if: github.event_name != 'workflow_run'
+        uses: actions/checkout@v4
+
+      - name: Compute image TAG / Namespace
+        id: meta
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            SHA="${{ github.event.workflow_run.head_sha }}"
+          else
+            SHA="${{ github.sha }}"
+          fi
+          SHORT="${SHA:0:7}"
+
+          INPUT_TAG="${{ inputs.image_tag || '' }}"
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          else
+            TAG="testing-$SHORT"
+          fi
+
+          NS_SUFFIX="${{ inputs.namespace_suffix || '' }}"
+          if [ -z "$NS_SUFFIX" ]; then
+            NS_SUFFIX="$SHORT"
+          fi
+          NS="stg-$NS_SUFFIX"
+
+          echo "TAG=$TAG"       >> "$GITHUB_OUTPUT"
+          echo "NS=$NS"         >> "$GITHUB_OUTPUT"
+          echo "REG=${{ env.REGISTRY }}" >> "$GITHUB_OUTPUT"
+          echo "Using REG=$REG, TAG=$TAG, NS=$NS"
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS credentials
+        run: az aks get-credentials -g "$AKS_RG" -n "$AKS_NAME" --overwrite-existing
+
+      - name: Create / ensure staging namespace
+        run: |
+          NS="${{ steps.meta.outputs.NS }}"
+          kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS"
+          echo "Staging namespace: $NS"
+
+      - name: Apply config & secrets
+        run: |
+          NS="${{ steps.meta.outputs.NS }}"
+          kubectl apply -n "$NS" -f k8s/configmaps.yaml
+          kubectl apply -n "$NS" -f k8s/secrets.yaml || true
+
+      - name: Apply databases
+        run: |
+          NS="${{ steps.meta.outputs.NS }}"
+          kubectl apply -n "$NS" -f k8s/product-db.yaml
+          kubectl apply -n "$NS" -f k8s/order-db.yaml
+          kubectl apply -n "$NS" -f k8s/customer-db.yaml
+
+      - name: Wait for DB deployments
+        run: |
+          NS="${{ steps.meta.outputs.NS }}"
+          kubectl rollout status deploy/product-db-deployment-w10e1   -n "$NS" --timeout=300s || true
+          kubectl rollout status deploy/order-db-deployment-w10e1     -n "$NS" --timeout=300s || true
+          kubectl rollout status deploy/customer-db-deployment-w10e1  -n "$NS" --timeout=300s || true
+
+      - name: Apply services
+        run: |
+          NS="${{ steps.meta.outputs.NS }}"
+          kubectl apply -n "$NS" -f k8s/product-service.yaml
+          kubectl apply -n "$NS" -f k8s/order-service.yaml
+          kubectl apply -n "$NS" -f k8s/customer-service.yaml
+          kubectl apply -n "$NS" -f k8s/frontend.yaml || true
+
+      - name: Set images to TAG
+        run: |
+          NS="${{ steps.meta.outputs.NS }}"
+          REG="${{ steps.meta.outputs.REG }}"
+          TAG="${{ steps.meta.outputs.TAG }}"
+          kubectl set image deploy/product-service-w10e1  product-service-container="$REG/product-service:$TAG"   -n "$NS"
+          kubectl set image deploy/order-service-w10e1    order-service-container="$REG/order-service:$TAG"       -n "$NS"
+          kubectl set image deploy/customer-service-w10e1 customer-service-container="$REG/customer-service:$TAG" -n "$NS"
+          kubectl set image deploy/frontend               frontend="$REG/frontend:$TAG"                           -n "$NS" || true
+
+      - name: Wait for rollouts
+        run: |
+          NS="${{ steps.meta.outputs.NS }}"
+          kubectl rollout status deploy/product-service-w10e1   -n "$NS" --timeout=300s
+          kubectl rollout status deploy/order-service-w10e1     -n "$NS" --timeout=300s
+          kubectl rollout status deploy/customer-service-w10e1  -n "$NS" --timeout=300s
+          kubectl rollout status deploy/frontend                -n "$NS" --timeout=300s || true
+
+      - name: Basic infrastructure health checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          NS="${{ steps.meta.outputs.NS }}"
+          echo "=== Deployments ===";  kubectl get deploy -n "$NS" -o wide || true
+          echo "=== Services ===";     kubectl get svc -n "$NS" -o wide || true
+          echo "=== Pods ===";         kubectl get pods -n "$NS" -o wide || true
+          for app in product-service order-service customer-service frontend; do
+            echo "→ pods ready: app=$app"
+            kubectl wait --for=condition=ready pod -l app="$app" -n "$NS" --timeout=120s
+          done
+          echo "✅ Infra ready in $NS"
+
+      - name: Test API endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          NS="${{ steps.meta.outputs.NS }}"
+
+          echo "=== Testing API Health ==="
+
+          # Get service external IPs
+          PRODUCT_IP=$(kubectl get svc product-service-w10e1 -n "$NS" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          ORDER_IP=$(kubectl get svc order-service-w10e1 -n "$NS" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          CUSTOMER_IP=$(kubectl get svc customer-service-w10e1 -n "$NS" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          FRONTEND_IP=$(kubectl get svc frontend-w10e1 -n "$NS" -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+          echo "Product Service IP: $PRODUCT_IP"
+          echo "Order Service IP: $ORDER_IP"
+          echo "Customer Service IP: $CUSTOMER_IP"
+          echo "Frontend IP: $FRONTEND_IP"
+
+          # Wait for LoadBalancer IPs to be assigned
+          echo "Waiting for LoadBalancer IPs..."
+          sleep 90
+
+          # Test Product Service
+          if curl -sf --max-time 30 "http://$PRODUCT_IP:8000/" >/dev/null 2>&1 || curl -sf --max-time 30 "http://$PRODUCT_IP:8000/products" >/dev/null 2>&1; then
+            echo "✅ Product Service: PASS"
+          else
+            echo "❌ Product Service: FAIL"
+          fi
+
+          # Test Order Service
+          if curl -sf --max-time 30 "http://$ORDER_IP:8001/" >/dev/null 2>&1 || curl -sf --max-time 30 "http://$ORDER_IP:8001/orders" >/dev/null 2>&1; then
+            echo "✅ Order Service: PASS"
+          else
+            echo "❌ Order Service: FAIL"
+          fi
+
+          # Test Customer Service
+          if curl -sf --max-time 30 "http://$CUSTOMER_IP:8002/" >/dev/null 2>&1 || curl -sf --max-time 30 "http://$CUSTOMER_IP:8002/customers" >/dev/null 2>&1; then
+            echo "✅ Customer Service: PASS"
+          else
+            echo "❌ Customer Service: FAIL"
+          fi
+
+          # Test Frontend
+          if curl -sf --max-time 30 "http://$FRONTEND_IP:80/" >/dev/null 2>&1; then
+            echo "✅ Frontend: PASS"
+          else
+            echo "❌ Frontend: FAIL"
+          fi
+
+          echo "✅ API tests completed"
+
+      - name: Destroy staging environment (always)
+        if: always()
+        run: |
+          kubectl delete namespace "${{ steps.meta.outputs.NS }}" --wait=false
