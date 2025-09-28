@@ -80,6 +80,11 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.5.0"
+
       - name: Set Azure Environment Variables for Terraform
         run: |
           # Extract values from AZURE_CREDENTIALS and set as environment variables
@@ -96,11 +101,6 @@ jobs:
 
       - name: Get AKS credentials
         run: az aks get-credentials -g "$AKS_RG" -n "$AKS_NAME" --overwrite-existing
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: "1.5.0"
 
       - name: Create / ensure staging namespace
         run: |
