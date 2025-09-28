@@ -18,9 +18,9 @@ on:
         type: string
 
 env:
-  REGISTRY: deakinstellaregistry2025.azurecr.io
+  REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
   AKS_RG: deakinuni
-  AKS_NAME: deakinstellak8s2025
+  AKS_NAME: deakinstellak8s
 
 concurrency:
   group: staging-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.run_id }}
@@ -80,25 +80,6 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: "1.5.0"
-
-      - name: Set Azure Environment Variables for Terraform
-        run: |
-          # Extract values from AZURE_CREDENTIALS and set as environment variables
-          CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
-          CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)
-          TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)
-          SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)
-
-          echo "ARM_CLIENT_ID=$CLIENT_ID" >> $GITHUB_ENV
-          echo "ARM_CLIENT_SECRET=$CLIENT_SECRET" >> $GITHUB_ENV
-          echo "ARM_TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
-          echo "ARM_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> $GITHUB_ENV
-          echo "ARM_USE_CLI=false" >> $GITHUB_ENV
-
       - name: Get AKS credentials
         run: az aks get-credentials -g "$AKS_RG" -n "$AKS_NAME" --overwrite-existing
 
@@ -108,27 +89,11 @@ jobs:
           kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS"
           echo "Staging namespace: $NS"
 
-      - name: Get Infrastructure Outputs and Apply Config
+      - name: Apply config & secrets
         run: |
           NS="${{ steps.meta.outputs.NS }}"
-
-          # Apply configmaps first
           kubectl apply -n "$NS" -f k8s/configmaps.yaml
-
-          # Get Terraform outputs for secrets
-          cd terraform
-          STORAGE_NAME=$(terraform output -raw storage_account_name)
-          STORAGE_KEY=$(terraform output -raw storage_account_primary_key)
-
-          # Base64 encode for Kubernetes secrets
-          export POSTGRES_USER_B64=$(echo -n "postgres" | base64 -w 0)
-          export POSTGRES_PASSWORD_B64=$(echo -n "postgres" | base64 -w 0)
-          export STORAGE_ACCOUNT_NAME_B64=$(echo -n "$STORAGE_NAME" | base64 -w 0)
-          export STORAGE_ACCOUNT_KEY_B64=$(echo -n "$STORAGE_KEY" | base64 -w 0)
-
-          # Create secrets from template
-          cd ..
-          envsubst < k8s/secrets.yaml | kubectl apply -n "$NS" -f -
+          kubectl apply -n "$NS" -f k8s/secrets.yaml || true
 
       - name: Apply databases
         run: |
