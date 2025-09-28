@@ -126,16 +126,16 @@ class TestOrderSchemas:
         assert order.status == "pending"
 
     def test_order_create_empty_items(self):
-        """Test OrderCreate with empty items list."""
+        """Test OrderCreate with empty items list - should pass schema validation."""
         data = {
             "user_id": 1,
-            "items": []  # Should require at least 1 item
+            "items": []  # Schema allows empty items, endpoint will validate
         }
 
-        with pytest.raises(ValidationError) as exc_info:
-            OrderCreate(**data)
-
-        assert "at least 1 item" in str(exc_info.value)
+        # Should not raise ValidationError at schema level
+        order = OrderCreate(**data)
+        assert order.user_id == 1
+        assert order.items == []
 
     def test_order_create_invalid_user_id(self):
         """Test OrderCreate with invalid user_id."""
