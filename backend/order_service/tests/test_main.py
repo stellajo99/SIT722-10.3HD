@@ -114,11 +114,11 @@ def test_health_check(client: TestClient):
 def test_create_order_success(client: TestClient, db_session_for_test, mock_httpx_client):
     """Test successful order creation with customer validation."""
     mock_httpx_client.get.return_value.status_code = 200
-    mock_httpx_client.get.return_value.json.return_value = {
+    mock_httpx_client.get.return_value.json = AsyncMock(return_value={
         "customer_id": 1,
         "email": "test@example.com",
         "shipping_address": "123 Default St"
-    }
+    })
     mock_httpx_client.get.return_value.raise_for_status.return_value = None
 
     order_data = {
@@ -148,6 +148,8 @@ def test_create_order_success(client: TestClient, db_session_for_test, mock_http
     assert response_data["total_amount"] == 61.97  # (2 * 15.99) + (1 * 29.99)
     assert len(response_data["items"]) == 2
     assert "order_id" in response_data
+
+
 
 
 def test_create_order_invalid_customer(client: TestClient, mock_httpx_client):
@@ -197,11 +199,11 @@ def test_list_orders_with_filters(client: TestClient, db_session_for_test, mock_
     """Test listing orders with filters."""
     # Mock customer service
     mock_httpx_client.get.return_value.status_code = 200
-    mock_httpx_client.get.return_value.json.return_value = {
+    mock_httpx_client.get.return_value.json = AsyncMock(return_value={
         "customer_id": 1,
         "email": "test@example.com",
         "shipping_address": "123 Default St"
-    }
+    })
     mock_httpx_client.get.return_value.raise_for_status.return_value = None
 
     # Create test orders
@@ -235,11 +237,11 @@ def test_get_order_success(client: TestClient, db_session_for_test, mock_httpx_c
     """Test retrieving a specific order."""
     # Mock customer service
     mock_httpx_client.get.return_value.status_code = 200
-    mock_httpx_client.get.return_value.json.return_value = {
+    mock_httpx_client.get.return_value.json = AsyncMock(return_value={
         "customer_id": 1,
         "email": "test@example.com",
         "shipping_address": "123 Default St"
-    }
+    })
     mock_httpx_client.get.return_value.raise_for_status.return_value = None
 
     # Create order
@@ -260,6 +262,10 @@ def test_get_order_success(client: TestClient, db_session_for_test, mock_httpx_c
     assert len(order["items"]) == 1
 
 
+
+
+
+
 def test_get_order_not_found(client: TestClient):
     """Test retrieving non-existent order."""
     response = client.get("/orders/999999")
@@ -275,15 +281,17 @@ def test_update_order_status_not_found(client: TestClient):
     assert response.json()["detail"] == "Order not found"
 
 
+
+
 def test_delete_order_success(client: TestClient, db_session_for_test, mock_httpx_client):
     """Test successful order deletion."""
     # Mock customer service
     mock_httpx_client.get.return_value.status_code = 200
-    mock_httpx_client.get.return_value.json.return_value = {
+    mock_httpx_client.get.return_value.json = AsyncMock(return_value={
         "customer_id": 1,
         "email": "test@example.com",
         "shipping_address": "123 Default St"
-    }
+    })
     mock_httpx_client.get.return_value.raise_for_status.return_value = None
 
     # Create order
@@ -310,15 +318,17 @@ def test_delete_order_not_found(client: TestClient):
     assert response.json()["detail"] == "Order not found"
 
 
+
+
 def test_get_order_items(client: TestClient, db_session_for_test, mock_httpx_client):
     """Test retrieving order items."""
     # Mock customer service
     mock_httpx_client.get.return_value.status_code = 200
-    mock_httpx_client.get.return_value.json.return_value = {
+    mock_httpx_client.get.return_value.json = AsyncMock(return_value={
         "customer_id": 1,
         "email": "test@example.com",
         "shipping_address": "123 Default St"
-    }
+    })
     mock_httpx_client.get.return_value.raise_for_status.return_value = None
 
     # Create order with multiple items
@@ -363,11 +373,11 @@ def test_order_with_default_shipping_address(client: TestClient, mock_httpx_clie
     """Test order creation using customer's default shipping address."""
     # Mock customer service with default shipping address
     mock_httpx_client.get.return_value.status_code = 200
-    mock_httpx_client.get.return_value.json.return_value = {
+    mock_httpx_client.get.return_value.json = AsyncMock(return_value={
         "customer_id": 1,
         "email": "test@example.com",
         "shipping_address": "123 Default Customer St"
-    }
+    })
     mock_httpx_client.get.return_value.raise_for_status.return_value = None
 
     order_data = {
@@ -381,3 +391,5 @@ def test_order_with_default_shipping_address(client: TestClient, mock_httpx_clie
 
     order = response.json()
     assert order["shipping_address"] == "123 Default Customer St"
+
+
