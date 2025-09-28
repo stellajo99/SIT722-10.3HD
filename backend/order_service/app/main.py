@@ -342,7 +342,7 @@ async def create_order(order: OrderCreate, db: Session = Depends(get_db)):
         try:
             response = await client.get(customer_validation_url, timeout=3)
             response.raise_for_status()  # Raises HTTPStatusError for 4xx/5xx responses
-            customer_data = await response.json()
+            customer_data = response.json()
             logger.info(
                 f"Order Service: Customer ID {order.user_id} validated. Customer email: {customer_data.get('email')}"
             )
