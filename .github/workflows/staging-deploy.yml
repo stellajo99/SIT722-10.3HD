@@ -1,5 +1,5 @@
 # .github/workflows/staging-deploy.yml
-# SMALL CHANGE
+
 name: CD - Staging (Create → Deploy → Test → Destroy)
 
 on:
