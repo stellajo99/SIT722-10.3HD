@@ -18,9 +18,9 @@ on:
         type: string
 
 env:
-  REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY }}
+  REGISTRY: deakinstellaregistry2025.azurecr.io 
   AKS_RG: deakinuni
-  AKS_NAME: deakinstellak8s
+  AKS_NAME: deakinstellak8s2025
 
 concurrency:
   group: staging-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.run_id }}
