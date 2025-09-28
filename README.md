@@ -18,9 +18,9 @@ By following this tutorial, you'll implement the **complete automation** demonst
 
 ### **Architecture You'll Build**
 ```
-GitHub Push → CI (Build/Test/Push) → Infrastructure (Terraform) → Staging (Deploy/Test/Destroy) → Production
+GitHub Push → Infrastructure (Terraform) → CI (Build/Test/Push) → Staging (Deploy/Test/Destroy) → Production
      ↓              ↓                        ↓                        ↓                         ↓
-   Automated    Container Registry     Live Infrastructure     Ephemeral Testing        Production Ready
+Automation start   Live Infrastructure     Container Registry    Ephemeral Testing        Production Ready
 ```
 
 ---
@@ -39,7 +39,7 @@ GitHub Push → CI (Build/Test/Push) → Infrastructure (Terraform) → Staging 
 ### **Step 1: Fork and Setup Repository**
 ```bash
 # Fork this repository on GitHub, then:
-git clone https://github.com/YOUR-USERNAME/SIT722-10.3HD
+git clone https://github.com/stellajo99/SIT722-10.3HD
 cd SIT722-10.3HD
 ```
 
@@ -47,7 +47,7 @@ cd SIT722-10.3HD
 ```bash
 # Create service principal for automated Azure access
 az ad sp create-for-rbac --name "github-actions-devops-tutorial" \
-  --role "Contributor" \
+  --role "Owner" \
   --scopes "/subscriptions/{your-subscription-id}" \
   --sdk-auth
 
@@ -61,50 +61,30 @@ Add these secrets for complete automation:
 ```yaml
 AZURE_CREDENTIALS: # Paste output from Step 2
 TERRAFORM_STATE_RESOURCE_GROUP: "terraform-state-rg"
-TERRAFORM_STATE_STORAGE_ACCOUNT: "terraformstate84329"
+TERRAFORM_STATE_STORAGE_ACCOUNT: "terraformstate12345"
 TERRAFORM_STATE_CONTAINER: "tfstate"
 TERRAFORM_STATE_KEY: "ecommerce.terraform.tfstate"
 ```
 
 ### **Step 4: Test Complete Automation**
 ```bash
-# Complete automation flow:
-
-# 1. First, trigger infrastructure creation (any terraform changes)
+# Trigger the full automation chain:
 git checkout testing
-echo "# Update infrastructure" >> terraform/variables.tf
-git add terraform/
-git commit -m "infrastructure: trigger Azure infrastructure creation"
-git push origin testing
-# → This creates/updates Azure infrastructure via Terraform
-
-# 2. Then trigger application deployment to testing
 echo "# Testing automation" >> test.txt
 git add .
 git commit -m "test: trigger complete automation"
 git push origin testing
-# → This triggers CI → builds containers → pushes to ACR
-# → Then auto-triggers staging deployment → creates ephemeral environment → tests → cleanup
 
-# 3. After testing validation, merge to main for production deployment
-git checkout main
-git merge testing
-git push origin main
-# → This triggers CI → CD pipeline → deploys to production → accessible IP available
-
-# 🎉 Watch the complete automation chain in GitHub Actions:
-# Infrastructure → CI → Staging → Production → Live Accessible Application!
+# 🎉 Watch the magic happen in GitHub Actions!
 ```
 
 ---
 
 ## 🎓 **Tutorial Deep Dive: Understanding the Automation**
 
-### **🔄 Feature 1: Complete CI Automation with Comprehensive Testing**
+### **🔄 Feature 1: Complete CI Automation**
 
-**Files to Study**:
-- `.github/workflows/ci.yml` (CI pipeline)
-- `backend/*/tests/` (Test suites for each service)
+**File to Study**: `.github/workflows/ci.yml`
 
 **What This Automates**:
 ```yaml
@@ -114,59 +94,6 @@ on:
     branches: [ "testing", "main" ]  # Auto-trigger on branch push
   workflow_dispatch:                 # Manual trigger capability
 ```
-
-**🧪 Multi-Layer Testing Strategy**:
-
-**1. Unit Tests** (Models & Schemas):
-```yaml
-# Backend tests with PostgreSQL service
-test-backend:
-  services:
-    postgres:
-      image: postgres:13
-      env:
-        POSTGRES_USER: postgres
-        POSTGRES_PASSWORD: postgres
-        POSTGRES_DB: test_db
-  strategy:
-    matrix:
-      service: [ "product_service", "order_service", "customer_service" ]
-```
-
-**2. Integration Tests** (API Endpoints):
-```python
-# Example from backend/product_service/tests/test_main.py
-def test_create_product_success(client: TestClient, db_session_for_test: Session):
-    test_data = {
-        "name": "New Test Product",
-        "description": "A brand new product for testing",
-        "price": 12.34,
-        "stock_quantity": 100,
-        "image_url": "http://example.com/test_image.jpg",
-    }
-    response = client.post("/products/", json=test_data)
-    assert response.status_code == 201
-    # Verify database persistence
-    db_product = db_session_for_test.query(Product).filter(...).first()
-    assert db_product.name == test_data["name"]
-```
-
-**3. Schema Validation Tests**:
-```python
-# Example from backend/product_service/tests/test_schemas.py
-def test_product_create_invalid_price_negative(self):
-    data = {"name": "Invalid Product", "price": -10.0, "stock_quantity": 50}
-    with pytest.raises(ValidationError) as exc_info:
-        ProductCreate(**data)
-    assert "greater than 0" in str(exc_info.value)
-```
-
-**🚀 Testing Features**:
-- **Parallel Test Execution**: Matrix strategy runs all services simultaneously
-- **Database Transaction Isolation**: Each test runs in isolated transactions
-- **Mock External Services**: Azure Blob Storage mocked for reliable testing
-- **Comprehensive Coverage**: Unit tests (models/schemas) + Integration tests (APIs)
-- **Validation Testing**: Pydantic schema validation with edge cases
 
 **Key Learning: Dynamic Tag Generation**
 ```yaml
@@ -570,9 +497,9 @@ kubectl create namespace "load-test-${DATE}"    # For load testing
 
 ## 🧪 **Complete Testing Guide: Verify Your Implementation**
 
-### **Test 1: Complete Testing Pipeline Verification**
+### **Test 1: End-to-End Automation**
 ```bash
-# This tests the complete testing and automation chain
+# This tests the complete automation chain
 git checkout testing
 echo "Test automation $(date)" > test-automation.txt
 git add .
@@ -581,57 +508,19 @@ git push origin testing
 
 # Expected flow:
 # 1. CI workflow starts automatically
-# 2. Unit Tests: Model & Schema validation (pytest backend/*/tests/test_models.py test_schemas.py)
-# 3. Integration Tests: API endpoints with PostgreSQL (pytest backend/*/tests/test_main.py)
-# 4. Builds and pushes containers to ACR (only after ALL tests pass)
-# 5. Staging workflow triggers automatically
-# 6. Creates ephemeral environment
-# 7. Deploys and tests applications
-# 8. Cleans up environment
+# 2. Builds and tests all services
+# 3. Pushes containers to ACR
+# 4. Staging workflow triggers automatically
+# 5. Creates ephemeral environment
+# 6. Deploys and tests applications
+# 7. Cleans up environment
 ```
 
-**Watch Points - Testing Phase**:
-- **Unit Test Results**: All model and schema validations pass
-- **Integration Test Results**: All API endpoints return expected responses
-- **Database Tests**: Transaction isolation and rollback working correctly
-- **Mock Services**: Azure Blob Storage mocking successful
-- **Test Parallel Execution**: All 3 services tested simultaneously
-
-**Watch Points - Deployment Phase**:
+**Watch Points**:
 - GitHub Actions shows both workflows running
-- ACR receives new container images (only after tests pass)
+- ACR receives new container images
 - Kubernetes namespace created then deleted
 - All tests pass before cleanup
-
-### **Test 1.1: Local Testing Verification**
-```bash
-# Run tests locally to verify test suite before CI
-cd backend/product_service
-pip install -r requirements-dev.txt
-pip install -r requirements.txt
-
-# Run unit tests
-pytest tests/test_models.py -v
-pytest tests/test_schemas.py -v
-
-# Run integration tests (requires PostgreSQL)
-export POSTGRES_USER=postgres
-export POSTGRES_PASSWORD=postgres
-export POSTGRES_DB=test_db
-export POSTGRES_HOST=localhost
-export POSTGRES_PORT=5432
-pytest tests/test_main.py -v
-
-# Run all tests
-pytest tests/ -v
-```
-
-**Expected Local Test Results**:
-- ✅ test_models.py: 15+ model validation tests pass
-- ✅ test_schemas.py: 25+ schema validation tests pass
-- ✅ test_main.py: 10+ API integration tests pass
-- ✅ Database transactions properly isolated
-- ✅ Mock Azure services working correctly
 
 ### **Test 2: Infrastructure Change Propagation**
 ```bash
@@ -667,63 +556,6 @@ kubectl get secret ecomm-secrets-w10e1 -n stg-abc1234 -o yaml
 # Decode and verify a secret value
 kubectl get secret ecomm-secrets-w10e1 -n stg-abc1234 \
   -o jsonpath='{.data.POSTGRES_USER}' | base64 -d
-```
-
-### **Test 5: Parallel Environment Isolation**
-```bash
-# Create multiple test environments simultaneously
-# 1. Create branch test1: git checkout -b test1; git push origin test1
-# 2. Create branch test2: git checkout -b test2; git push origin test2
-# 3. Manually trigger staging deploy for both
-# 4. Verify both environments run simultaneously
-kubectl get namespaces | grep stg-
-```
-
----
-
-## 🎯 **Production Deployment Tutorial**
-
-### **Extending to Production**
-
-**Step 1: Create Production Workflow**
-```yaml
-# .github/workflows/production-deploy.yml
-name: Production Deployment
-on:
-  workflow_run:
-    workflows: ["CI (testing push → test → ACR push)"]
-    types: [completed]
-    branches: [main]  # Only deploy main branch to production
-
-jobs:
-  deploy-production:
-    if: github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
-    environment: production  # Requires approval
-
-    steps:
-      # Same steps as staging but with production namespace
-      - name: Deploy to Production
-        run: |
-          NS="production"
-          # Same deployment logic but no cleanup
-```
-
-**Step 2: Add Approval Gates**
-```yaml
-# In GitHub repo settings → Environments
-# Create "production" environment
-# Add required reviewers
-# Add deployment protection rules
-```
-
-**Step 3: Production-Specific Configurations**
-```yaml
-# k8s/production/
-├── configmaps.yaml          # Production config values
-├── secrets.yaml            # Production secret templates
-├── product-service.yaml    # With resource limits
-└── ingress.yaml           # Production ingress rules
 ```
 
 ---
@@ -802,106 +634,10 @@ terraform plan -lock-timeout=300s  # Increase timeout
 
 ---
 
-## 🚀 **Advanced Extensions: Next Level Automation**
-
-Once you've mastered the core automation, try these advanced patterns:
-
-### **1. Multi-Environment Matrix Deployment**
-```yaml
-strategy:
-  matrix:
-    environment: [staging, production]
-    region: [eastus, westus]
-```
-
-### **2. Automated Rollback on Failure**
-```yaml
-- name: Health Check & Rollback
-  run: |
-    if ! curl -f http://$SERVICE_IP/health; then
-      kubectl rollout undo deployment/product-service -n $NS
-      exit 1
-    fi
-```
-
-### **3. Blue-Green Deployment**
-```yaml
-- name: Blue-Green Switch
-  run: |
-    kubectl patch service product-service -p '{"spec":{"selector":{"version":"green"}}}'
-```
-
-### **4. Integration with External Systems**
-```yaml
-- name: Notify Slack
-  uses: 8398a7/action-slack@v3
-  with:
-    status: ${{ job.status }}
-    webhook_url: ${{ secrets.SLACK_WEBHOOK }}
-```
-
----
-
-## 📚 **Learning Resources & Further Reading**
-
-### **Concepts Demonstrated**
-- **GitOps**: Declarative configuration management
-- **Infrastructure as Code**: Terraform integration patterns
-- **Microservices**: Service mesh communication
-- **DevSecOps**: Secure secret management
-- **SRE**: Automated testing and cleanup
-
-### **Related Technologies to Explore**
-- **ArgoCD**: GitOps continuous deployment
-- **Helm**: Kubernetes package management
-- **Prometheus**: Monitoring and alerting
-- **Istio**: Service mesh networking
-- **Trivy**: Container security scanning
-
-### **Production Considerations**
-- Multi-region deployments
-- Disaster recovery procedures
-- Compliance and audit logging
-- Performance monitoring
-- Cost optimization
-
----
-
-## 🤝 **Contributing to This Tutorial**
-
-Help others learn by improving this tutorial:
-
-1. **Fork** the repository
-2. **Enhance** documentation or add new automation features
-3. **Test** your changes thoroughly
-4. **Submit** pull request with clear explanation
-5. **Update** this README with your improvements
-
-**Areas for Contribution**:
-- Additional testing patterns
-- Security enhancements
-- Performance optimizations
-- More cloud provider integrations
-- Advanced monitoring setups
-
----
-
 ## 📄 **License & Acknowledgments**
 
 This educational project is MIT licensed.
 
 **Course Context**: This project was developed for SIT722 Software Deployment and Operation at Deakin University. The base e-commerce application was provided as course material. The innovative automation pipeline, infrastructure integration, and DevOps practices demonstrated here represent significant extensions beyond the base requirements.
 
-**Educational Use**: This tutorial is designed to teach enterprise-grade DevOps automation patterns. Feel free to use, modify, and extend for your learning and teaching needs.
 
----
-
-**🎓 Completion Achievement: You've learned enterprise-grade DevOps automation patterns used by Fortune 500 companies. These skills directly apply to real-world production environments and represent advanced knowledge in modern software delivery practices.**
-
-## 🔗 **Quick Navigation**
-- [Automation Features](#what-youll-learn--replicate)
-- [Quick Start](#quick-start-replicate-this-automation)
-- [Deep Dive Tutorials](#tutorial-deep-dive-understanding-the-automation)
-- [Testing Guide](#complete-testing-guide-verify-your-implementation)
-- [Troubleshooting](#troubleshooting-guide-common-issues--solutions)
-- [Advanced Extensions](#advanced-extensions-next-level-automation)
