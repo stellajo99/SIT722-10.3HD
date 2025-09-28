@@ -88,6 +88,11 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
       - name: Set Azure Environment Variables for Terraform
         run: |
           # Extract values from AZURE_CREDENTIALS and set as environment variables
@@ -101,6 +106,11 @@ jobs:
           echo "ARM_TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
           echo "ARM_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> $GITHUB_ENV
           echo "ARM_USE_CLI=false" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
 
       - name: Set AKS context
         run: |
