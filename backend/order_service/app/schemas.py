@@ -43,7 +43,7 @@ class OrderBase(BaseModel):
 
 class OrderCreate(OrderBase):
     items: List[OrderItemCreate] = Field(
-        ..., min_length=1, description="List of items in the order."
+        ..., description="List of items in the order."
     )
 
 
