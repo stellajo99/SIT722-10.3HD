@@ -206,16 +206,46 @@ jobs:
 
           echo "✅ Database deployments ensured"
 
+      # --- Get Terraform Outputs for Secrets ---
+      - name: Get Infrastructure Outputs
+        id: terraform_outputs
+        run: |
+          echo "📋 Getting Terraform outputs for secrets..."
+          cd terraform
+
+          # Get outputs from Terraform
+          STORAGE_NAME=$(terraform output -raw storage_account_name)
+          STORAGE_KEY=$(terraform output -raw storage_account_primary_key)
+
+          # Base64 encode for Kubernetes secrets
+          POSTGRES_USER_B64=$(echo -n "postgres" | base64 -w 0)
+          POSTGRES_PASSWORD_B64=$(echo -n "postgres" | base64 -w 0)
+          STORAGE_NAME_B64=$(echo -n "$STORAGE_NAME" | base64 -w 0)
+          STORAGE_KEY_B64=$(echo -n "$STORAGE_KEY" | base64 -w 0)
+
+          # Export for envsubst
+          export POSTGRES_USER_B64="$POSTGRES_USER_B64"
+          export POSTGRES_PASSWORD_B64="$POSTGRES_PASSWORD_B64"
+          export STORAGE_ACCOUNT_NAME_B64="$STORAGE_NAME_B64"
+          export STORAGE_ACCOUNT_KEY_B64="$STORAGE_KEY_B64"
+
+          echo "POSTGRES_USER_B64=$POSTGRES_USER_B64" >> "$GITHUB_ENV"
+          echo "POSTGRES_PASSWORD_B64=$POSTGRES_PASSWORD_B64" >> "$GITHUB_ENV"
+          echo "STORAGE_ACCOUNT_NAME_B64=$STORAGE_NAME_B64" >> "$GITHUB_ENV"
+          echo "STORAGE_ACCOUNT_KEY_B64=$STORAGE_KEY_B64" >> "$GITHUB_ENV"
+
       # --- Application Deployment ---
       - name: Apply Kubernetes manifests
         env:
           NS: ${{ github.event.inputs.namespace || 'default' }}
         run: |
           echo "📦 Applying Kubernetes manifests..."
-          
+
           # Apply configuration first
           kubectl apply -n "$NS" -f k8s/configmaps.yaml
-          kubectl apply -n "$NS" -f k8s/secrets.yaml
+
+          # Create secrets from Terraform outputs
+          envsubst < k8s/secrets.yaml | kubectl apply -n "$NS" -f -
           
           # Apply application manifests
           kubectl apply -n "$NS" -f k8s/product-service.yaml

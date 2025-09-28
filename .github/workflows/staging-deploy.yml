@@ -89,11 +89,27 @@ jobs:
           kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS"
           echo "Staging namespace: $NS"
 
-      - name: Apply config & secrets
+      - name: Get Infrastructure Outputs and Apply Config
         run: |
           NS="${{ steps.meta.outputs.NS }}"
+
+          # Apply configmaps first
           kubectl apply -n "$NS" -f k8s/configmaps.yaml
-          kubectl apply -n "$NS" -f k8s/secrets.yaml || true
+
+          # Get Terraform outputs for secrets
+          cd terraform
+          STORAGE_NAME=$(terraform output -raw storage_account_name)
+          STORAGE_KEY=$(terraform output -raw storage_account_primary_key)
+
+          # Base64 encode for Kubernetes secrets
+          export POSTGRES_USER_B64=$(echo -n "postgres" | base64 -w 0)
+          export POSTGRES_PASSWORD_B64=$(echo -n "postgres" | base64 -w 0)
+          export STORAGE_ACCOUNT_NAME_B64=$(echo -n "$STORAGE_NAME" | base64 -w 0)
+          export STORAGE_ACCOUNT_KEY_B64=$(echo -n "$STORAGE_KEY" | base64 -w 0)
+
+          # Create secrets from template
+          cd ..
+          envsubst < k8s/secrets.yaml | kubectl apply -n "$NS" -f -
 
       - name: Apply databases
         run: |
