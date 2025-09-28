@@ -26,7 +26,7 @@ on:
       aks_cluster_name:
         description: "AKS Cluster Name"
         required: true
-        default: "deakinstellak8s"
+        default: "deakinstellak8s2025"
       namespace:
         description: "Kubernetes Namespace"
         required: true
@@ -41,7 +41,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  REGISTRY: "deakinstellaregistry.azurecr.io"
+  REGISTRY: "deakinstellaregistry2025.azurecr.io"
 
 jobs:
   deploy:
@@ -107,7 +107,7 @@ jobs:
           echo "🔐 Configuring AKS access..."
           az aks get-credentials \
             -g "${{ github.event.inputs.aks_resource_group || 'deakinuni' }}" \
-            -n "${{ github.event.inputs.aks_cluster_name   || 'deakinstellak8s' }}" \
+            -n "${{ github.event.inputs.aks_cluster_name   || 'deakinstellak8s2025' }}" \
             --overwrite-existing
           
           echo "✅ AKS context configured"

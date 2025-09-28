@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
       - name: product-service-container
-        image: deakinstellaregistry.azurecr.io/product_service:v1
+        image: deakinstellaregistry2025.azurecr.io/product_service:v1
         ports:
         - containerPort: 8000
         env:

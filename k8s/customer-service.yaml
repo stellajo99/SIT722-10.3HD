@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
       - name: customer-service-container
-        image: deakinstellaregistry.azurecr.io/customer_service:v1
+        image: deakinstellaregistry2025.azurecr.io/customer_service:v1
         imagePullPolicy: Always
         ports:
         - containerPort: 8000

@@ -9,13 +9,13 @@ project_name = "ecommerce"
 environment  = "prod"
 
 # Azure Container Registry
-acr_name = "deakinstellaregistry"
+acr_name = "deakinstellaregistry2025"
 
 # Azure Storage Account
-storage_account_name = "deakinstellastorage"
+storage_account_name = "deakinstellastorage2025"
 
 # Azure Kubernetes Service
-aks_cluster_name = "deakinstellak8s"
+aks_cluster_name = "deakinstellak8s2025"
 aks_node_count   = 2
 aks_node_vm_size = "Standard_B2s"
 

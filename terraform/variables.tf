@@ -27,19 +27,19 @@ variable "environment" {
 variable "acr_name" {
   description = "Azure Container Registry name"
   type        = string
-  default     = "deakinstellaregistry"
+  default     = "deakinstellaregistry2025"
 }
 
 variable "storage_account_name" {
   description = "Azure Storage Account name"
   type        = string
-  default     = "deakinstellastorage"
+  default     = "deakinstellastorage2025"
 }
 
 variable "aks_cluster_name" {
   description = "Azure Kubernetes Service cluster name"
   type        = string
-  default     = "deakinstellak8s"
+  default     = "deakinstellak8s2025"
 }
 
 variable "aks_node_count" {
