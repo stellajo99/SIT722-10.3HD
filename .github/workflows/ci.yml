@@ -1,4 +1,5 @@
 # .github/workflows/ci.yml
+# small change!!
 name: CI (testing push → test → ACR push)
 
 on:
@@ -7,7 +8,7 @@ on:
   workflow_dispatch:      
 
 env:
-  REGISTRY: ${{ secrets.AZURE_CONTAINER_REGISTRY }} 
+  REGISTRY: deakinstellaregistry2025.azurecr.io 
 
 jobs:
 
@@ -90,7 +91,7 @@ jobs:
 
       - name: Login to ACR
         run: |
-          ACR_NAME="$(echo "${{ secrets.AZURE_CONTAINER_REGISTRY }}" | cut -d'.' -f1)"
+          ACR_NAME="$(echo "$REGISTRY" | cut -d'.' -f1)"
           az acr login --name "$ACR_NAME"
 
       - name: Set image tag
@@ -101,6 +102,37 @@ jobs:
           else
             echo "TAG=testing-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.0"
+
+      - name: Set Azure Environment Variables for Terraform
+        run: |
+          CLIENT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientId)
+          CLIENT_SECRET=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .clientSecret)
+          TENANT_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .tenantId)
+          SUBSCRIPTION_ID=$(echo '${{ secrets.AZURE_CREDENTIALS }}' | jq -r .subscriptionId)
+
+          echo "ARM_CLIENT_ID=$CLIENT_ID" >> $GITHUB_ENV
+          echo "ARM_CLIENT_SECRET=$CLIENT_SECRET" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=$TENANT_ID" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=$SUBSCRIPTION_ID" >> $GITHUB_ENV
+          echo "ARM_USE_CLI=false" >> $GITHUB_ENV
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Get Terraform outputs
+        id: terraform
+        run: |
+          cd terraform
+          STORAGE_KEY=$(terraform output -raw storage_account_primary_key)
+          echo "STORAGE_KEY=$STORAGE_KEY" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$STORAGE_KEY"
 
       - name: Build & Push product-service
         run: |
@@ -128,7 +160,7 @@ jobs:
 
       - name: Verify image push
         run: |
-          ACR_NAME="$(echo "${{ secrets.AZURE_CONTAINER_REGISTRY }}" | cut -d'.' -f1)"
+          ACR_NAME="$(echo "$REGISTRY" | cut -d'.' -f1)"
           echo "product-service:"
           az acr repository show-tags --name "$ACR_NAME" --repository product-service --orderby time_desc --top 5 || true
           echo "order-service:"
