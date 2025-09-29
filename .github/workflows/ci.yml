@@ -1,14 +1,22 @@
 # .github/workflows/ci.yml
-# small change!!
+
 name: CI (testing push → test → ACR push)
 
 on:
   push:
     branches: [ "testing", "main" ]
+    paths-ignore:
+      - 'terraform/**'
+      - '.github/workflows/infrastructure.yml'
   workflow_dispatch:      
 
 env:
-  REGISTRY: deakinstellaregistry2025.azurecr.io 
+  REGISTRY: deakinstellaregistry2025.azurecr.io
+
+# Prevent concurrent runs with infrastructure workflow
+concurrency:
+  group: infrastructure-${{ github.ref }}
+  cancel-in-progress: true 
 
 jobs:
 

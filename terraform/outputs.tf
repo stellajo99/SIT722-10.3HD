@@ -1,4 +1,6 @@
 # terraform/outputs.tf
+# small change
+
 
 output "resource_group_name" {
   description = "Name of the created resource group"
